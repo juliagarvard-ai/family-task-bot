@@ -8,8 +8,14 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import requests
 from dotenv import load_dotenv
 from groq import Groq
-from telegram import Update
-from telegram.ext import Application, ContextTypes, MessageHandler, filters
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import (
+    Application,
+    CallbackQueryHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 
 load_dotenv()
 
@@ -106,6 +112,45 @@ def parse_task(text: str) -> dict:
     return json.loads(completion.choices[0].message.content)
 
 
+def format_task_summary(parsed: dict) -> str:
+    when = parsed.get("due_date") or "—"
+    if parsed.get("due_date") and parsed.get("due_time"):
+        when = f"{parsed['due_date']} {parsed['due_time']}"
+
+    return (
+        f"Кто: {parsed.get('assignee') or '—'}\n"
+        f"Что: {parsed.get('task') or '—'}\n"
+        f"Когда: {when}"
+    )
+
+
+async def process_recognized_text(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, text: str
+) -> None:
+    if not text.strip():
+        await update.message.reply_text("Не расслышал, скажи ещё раз.")
+        return
+
+    parsed = parse_task(text)
+    if not parsed.get("assignee"):
+        parsed["assignee"] = update.effective_user.first_name
+
+    context.user_data["pending_task"] = parsed
+
+    keyboard = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("✅ Создать", callback_data="confirm"),
+                InlineKeyboardButton("❌ Отмена", callback_data="cancel"),
+            ]
+        ]
+    )
+    await update.message.reply_text(
+        f"Я правильно понял?\n\n{format_task_summary(parsed)}",
+        reply_markup=keyboard,
+    )
+
+
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
 
@@ -118,24 +163,37 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         audio_bytes = bytes(await voice_file.download_as_bytearray())
 
         text = transcribe_voice(audio_bytes)
-        parsed = parse_task(text)
-        if not parsed.get("assignee"):
-            parsed["assignee"] = update.effective_user.first_name
-        create_todoist_task(parsed)
-
-        when = parsed.get("due_date") or "—"
-        if parsed.get("due_date") and parsed.get("due_time"):
-            when = f"{parsed['due_date']} {parsed['due_time']}"
-
-        await update.message.reply_text(
-            f"Задача создана в Todoist!\n\n"
-            f"Кто: {parsed.get('assignee') or '—'}\n"
-            f"Что: {parsed.get('task') or '—'}\n"
-            f"Когда: {when}"
-        )
+        await process_recognized_text(update, context, text)
     except Exception:
         logger.exception("Не удалось обработать голосовое сообщение")
-        await update.message.reply_text("Что-то пошло не так, не смог создать задачу.")
+        await update.message.reply_text("Что-то пошло не так, не смог обработать голосовое.")
+
+
+async def handle_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    user_id = query.from_user.id
+
+    if user_id not in ALLOWED_USER_IDS:
+        return
+
+    await query.answer()
+
+    parsed = context.user_data.pop("pending_task", None)
+    if parsed is None:
+        await query.edit_message_text("Эта задача уже обработана.")
+        return
+
+    if query.data == "confirm":
+        try:
+            create_todoist_task(parsed)
+            await query.edit_message_text(
+                f"Задача создана в Todoist!\n\n{format_task_summary(parsed)}"
+            )
+        except Exception:
+            logger.exception("Не удалось создать задачу в Todoist")
+            await query.edit_message_text("Что-то пошло не так, не смог создать задачу.")
+    else:
+        await query.edit_message_text("Отменено. Отправь голосовое ещё раз, если нужно.")
 
 
 class HealthCheckHandler(BaseHTTPRequestHandler):
@@ -158,6 +216,7 @@ def main() -> None:
 
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
+    app.add_handler(CallbackQueryHandler(handle_confirmation))
     app.run_polling()
 
 
