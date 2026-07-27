@@ -112,6 +112,8 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
         text = transcribe_voice(audio_bytes)
         parsed = parse_task(text)
+        if not parsed.get("assignee"):
+            parsed["assignee"] = update.effective_user.first_name
         create_todoist_task(parsed)
 
         await update.message.reply_text(
