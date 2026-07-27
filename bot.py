@@ -2,6 +2,7 @@ import logging
 import os
 
 from dotenv import load_dotenv
+from groq import Groq
 from telegram import Update
 from telegram.ext import Application, ContextTypes, MessageHandler, filters
 
@@ -11,11 +12,23 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 ALLOWED_USER_IDS = {
     int(uid.strip())
     for uid in os.getenv("ALLOWED_USER_IDS", "").split(",")
     if uid.strip()
 }
+
+groq_client = Groq(api_key=GROQ_API_KEY)
+
+
+def transcribe_voice(audio_bytes: bytes) -> str:
+    transcription = groq_client.audio.transcriptions.create(
+        file=("voice.ogg", audio_bytes),
+        model="whisper-large-v3",
+        language="ru",
+    )
+    return transcription.text
 
 
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -25,7 +38,11 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         logger.info("Игнорирую голосовое от постороннего ID: %s", user_id)
         return
 
-    await update.message.reply_text("Получил голосовое!")
+    voice_file = await update.message.voice.get_file()
+    audio_bytes = bytes(await voice_file.download_as_bytearray())
+
+    text = transcribe_voice(audio_bytes)
+    await update.message.reply_text(f"Распознал: {text}")
 
 
 def main() -> None:
