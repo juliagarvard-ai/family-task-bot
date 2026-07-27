@@ -3,6 +3,7 @@ import json
 import logging
 import os
 
+import requests
 from dotenv import load_dotenv
 from groq import Groq
 from telegram import Update
@@ -15,6 +16,8 @@ logger = logging.getLogger(__name__)
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+TODOIST_API_TOKEN = os.getenv("TODOIST_API_TOKEN")
+TODOIST_PROJECT_NAME = "Семья"
 ALLOWED_USER_IDS = {
     int(uid.strip())
     for uid in os.getenv("ALLOWED_USER_IDS", "").split(",")
@@ -22,6 +25,43 @@ ALLOWED_USER_IDS = {
 }
 
 groq_client = Groq(api_key=GROQ_API_KEY)
+_todoist_project_id = None
+
+
+def get_todoist_project_id() -> str:
+    global _todoist_project_id
+    if _todoist_project_id is not None:
+        return _todoist_project_id
+
+    response = requests.get(
+        "https://api.todoist.com/rest/v2/projects",
+        headers={"Authorization": f"Bearer {TODOIST_API_TOKEN}"},
+    )
+    response.raise_for_status()
+    for project in response.json():
+        if project["name"] == TODOIST_PROJECT_NAME:
+            _todoist_project_id = project["id"]
+            return _todoist_project_id
+
+    raise ValueError(f"Проект '{TODOIST_PROJECT_NAME}' не найден в Todoist")
+
+
+def create_todoist_task(parsed: dict) -> None:
+    content = parsed.get("task") or "Задача"
+    assignee = parsed.get("assignee")
+    if assignee:
+        content = f"{assignee}: {content}"
+
+    payload = {"project_id": get_todoist_project_id(), "content": content}
+    if parsed.get("due_date"):
+        payload["due_date"] = parsed["due_date"]
+
+    response = requests.post(
+        "https://api.todoist.com/rest/v2/tasks",
+        headers={"Authorization": f"Bearer {TODOIST_API_TOKEN}"},
+        json=payload,
+    )
+    response.raise_for_status()
 
 
 def transcribe_voice(audio_bytes: bytes) -> str:
@@ -71,9 +111,10 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     text = transcribe_voice(audio_bytes)
     parsed = parse_task(text)
+    create_todoist_task(parsed)
 
     await update.message.reply_text(
-        f"Распознал: {text}\n\n"
+        f"Задача создана в Todoist!\n\n"
         f"Кто: {parsed.get('assignee') or '—'}\n"
         f"Что: {parsed.get('task') or '—'}\n"
         f"Когда: {parsed.get('due_date') or '—'}"
