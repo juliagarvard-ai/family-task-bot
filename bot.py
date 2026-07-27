@@ -169,6 +169,20 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await update.message.reply_text("Что-то пошло не так, не смог обработать голосовое.")
 
 
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+
+    if user_id not in ALLOWED_USER_IDS:
+        logger.info("Игнорирую текст от постороннего ID: %s", user_id)
+        return
+
+    try:
+        await process_recognized_text(update, context, update.message.text)
+    except Exception:
+        logger.exception("Не удалось обработать текстовое сообщение")
+        await update.message.reply_text("Что-то пошло не так, не смог обработать сообщение.")
+
+
 async def handle_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     user_id = query.from_user.id
@@ -216,6 +230,7 @@ def main() -> None:
 
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(CallbackQueryHandler(handle_confirmation))
     app.run_polling()
 
