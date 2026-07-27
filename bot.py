@@ -34,11 +34,11 @@ def get_todoist_project_id() -> str:
         return _todoist_project_id
 
     response = requests.get(
-        "https://api.todoist.com/rest/v2/projects",
+        "https://api.todoist.com/api/v1/projects",
         headers={"Authorization": f"Bearer {TODOIST_API_TOKEN}"},
     )
     response.raise_for_status()
-    for project in response.json():
+    for project in response.json()["results"]:
         if project["name"] == TODOIST_PROJECT_NAME:
             _todoist_project_id = project["id"]
             return _todoist_project_id
@@ -57,7 +57,7 @@ def create_todoist_task(parsed: dict) -> None:
         payload["due_date"] = parsed["due_date"]
 
     response = requests.post(
-        "https://api.todoist.com/rest/v2/tasks",
+        "https://api.todoist.com/api/v1/tasks",
         headers={"Authorization": f"Bearer {TODOIST_API_TOKEN}"},
         json=payload,
     )
@@ -106,19 +106,23 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         logger.info("Игнорирую голосовое от постороннего ID: %s", user_id)
         return
 
-    voice_file = await update.message.voice.get_file()
-    audio_bytes = bytes(await voice_file.download_as_bytearray())
+    try:
+        voice_file = await update.message.voice.get_file()
+        audio_bytes = bytes(await voice_file.download_as_bytearray())
 
-    text = transcribe_voice(audio_bytes)
-    parsed = parse_task(text)
-    create_todoist_task(parsed)
+        text = transcribe_voice(audio_bytes)
+        parsed = parse_task(text)
+        create_todoist_task(parsed)
 
-    await update.message.reply_text(
-        f"Задача создана в Todoist!\n\n"
-        f"Кто: {parsed.get('assignee') or '—'}\n"
-        f"Что: {parsed.get('task') or '—'}\n"
-        f"Когда: {parsed.get('due_date') or '—'}"
-    )
+        await update.message.reply_text(
+            f"Задача создана в Todoist!\n\n"
+            f"Кто: {parsed.get('assignee') or '—'}\n"
+            f"Что: {parsed.get('task') or '—'}\n"
+            f"Когда: {parsed.get('due_date') or '—'}"
+        )
+    except Exception:
+        logger.exception("Не удалось обработать голосовое сообщение")
+        await update.message.reply_text("Что-то пошло не так, не смог создать задачу.")
 
 
 def main() -> None:
