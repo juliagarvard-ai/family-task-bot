@@ -2,6 +2,8 @@ import datetime
 import json
 import logging
 import os
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import requests
 from dotenv import load_dotenv
@@ -127,7 +129,24 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await update.message.reply_text("Что-то пошло не так, не смог создать задачу.")
 
 
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self) -> None:
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK")
+
+    def log_message(self, format, *args) -> None:
+        pass
+
+
+def start_health_server() -> None:
+    port = int(os.getenv("PORT", "8080"))
+    HTTPServer(("0.0.0.0", port), HealthCheckHandler).serve_forever()
+
+
 def main() -> None:
+    threading.Thread(target=start_health_server, daemon=True).start()
+
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     app.run_polling()
