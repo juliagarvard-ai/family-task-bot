@@ -55,7 +55,9 @@ def create_todoist_task(parsed: dict) -> None:
         content = f"{assignee}: {content}"
 
     payload = {"project_id": get_todoist_project_id(), "content": content}
-    if parsed.get("due_date"):
+    if parsed.get("due_date") and parsed.get("due_time"):
+        payload["due_string"] = f"{parsed['due_date']} {parsed['due_time']}"
+    elif parsed.get("due_date"):
         payload["due_date"] = parsed["due_date"]
 
     response = requests.post(
@@ -87,10 +89,13 @@ def parse_task(text: str) -> dict:
                     "извлеки задачу и верни СТРОГО JSON с полями:\n"
                     '- "assignee": имя человека, который должен выполнить задачу '
                     "(если явно не названо конкретное имя — null);\n"
-                    '- "task": краткое описание самой задачи, без имени и даты;\n'
+                    '- "task": краткое описание самой задачи, без имени, даты и времени;\n'
                     '- "due_date": дата выполнения в формате YYYY-MM-DD, если в '
                     "тексте есть дата, день недели или относительное указание "
                     f"(вычисли относительно сегодняшней даты {today}); если даты "
+                    "нет — null;\n"
+                    '- "due_time": время выполнения в формате HH:MM (24-часовой '
+                    "формат), если в тексте явно названо время; если времени "
                     "нет — null."
                 ),
             },
@@ -118,11 +123,15 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             parsed["assignee"] = update.effective_user.first_name
         create_todoist_task(parsed)
 
+        when = parsed.get("due_date") or "—"
+        if parsed.get("due_date") and parsed.get("due_time"):
+            when = f"{parsed['due_date']} {parsed['due_time']}"
+
         await update.message.reply_text(
             f"Задача создана в Todoist!\n\n"
             f"Кто: {parsed.get('assignee') or '—'}\n"
             f"Что: {parsed.get('task') or '—'}\n"
-            f"Когда: {parsed.get('due_date') or '—'}"
+            f"Когда: {when}"
         )
     except Exception:
         logger.exception("Не удалось обработать голосовое сообщение")
