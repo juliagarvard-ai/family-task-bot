@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import threading
+import uuid
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import requests
@@ -102,6 +103,23 @@ def resolve_responsible_uid(parsed: dict) -> str | None:
     return TELEGRAM_TODOIST_IDS.get(parsed.get("_telegram_user_id"))
 
 
+def assign_todoist_task(task_id: str, responsible_uid: str) -> None:
+    response = requests.post(
+        "https://api.todoist.com/api/v1/sync",
+        headers={"Authorization": f"Bearer {TODOIST_API_TOKEN}"},
+        json={
+            "commands": [
+                {
+                    "type": "item_update",
+                    "uuid": str(uuid.uuid4()),
+                    "args": {"id": task_id, "responsible_uid": responsible_uid},
+                }
+            ]
+        },
+    )
+    response.raise_for_status()
+
+
 def create_todoist_task(parsed: dict) -> None:
     content = parsed.get("task") or "Задача"
     responsible_uid = resolve_responsible_uid(parsed)
@@ -117,8 +135,6 @@ def create_todoist_task(parsed: dict) -> None:
         "section_id": get_todoist_section_id(category),
         "content": content,
     }
-    if responsible_uid:
-        payload["responsible_uid"] = responsible_uid
     if parsed.get("due_date") and parsed.get("due_time"):
         payload["due_string"] = f"{parsed['due_date']} {parsed['due_time']}"
     elif parsed.get("due_date"):
@@ -130,6 +146,9 @@ def create_todoist_task(parsed: dict) -> None:
         json=payload,
     )
     response.raise_for_status()
+
+    if responsible_uid:
+        assign_todoist_task(response.json()["id"], responsible_uid)
 
 
 def transcribe_voice(audio_bytes: bytes) -> str:
