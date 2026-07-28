@@ -123,7 +123,7 @@ def assign_todoist_task(task_id: str, responsible_uid: str) -> None:
 def create_todoist_task(parsed: dict) -> None:
     content = parsed.get("task") or "Задача"
     responsible_uid = resolve_responsible_uid(parsed)
-    if responsible_uid is None and parsed.get("assignee"):
+    if parsed.get("assignee"):
         content = f"{parsed['assignee']}: {content}"
 
     category = parsed.get("category") or "Разное"
