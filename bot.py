@@ -33,6 +33,19 @@ ALLOWED_USER_IDS = {
     if uid.strip()
 }
 
+# Telegram user ID -> Todoist collaborator ID (используется, когда исполнитель не назван явно)
+TELEGRAM_TODOIST_IDS = {
+    470500219: "41105906",  # Денис
+    506040342: "60027319",  # Юля
+}
+
+# Имя, названное голосом -> Todoist collaborator ID
+NAME_TODOIST_IDS = {
+    "денис": "41105906",
+    "юля": "60027319",
+    "юлия": "60027319",
+}
+
 groq_client = Groq(api_key=GROQ_API_KEY)
 _todoist_project_id = None
 _todoist_section_ids = {}
@@ -82,11 +95,18 @@ def get_todoist_section_id(category: str) -> str:
     return _todoist_section_ids[category]
 
 
+def resolve_responsible_uid(parsed: dict) -> str | None:
+    assignee = (parsed.get("assignee") or "").strip().lower()
+    if assignee in NAME_TODOIST_IDS:
+        return NAME_TODOIST_IDS[assignee]
+    return TELEGRAM_TODOIST_IDS.get(parsed.get("_telegram_user_id"))
+
+
 def create_todoist_task(parsed: dict) -> None:
     content = parsed.get("task") or "Задача"
-    assignee = parsed.get("assignee")
-    if assignee:
-        content = f"{assignee}: {content}"
+    responsible_uid = resolve_responsible_uid(parsed)
+    if responsible_uid is None and parsed.get("assignee"):
+        content = f"{parsed['assignee']}: {content}"
 
     category = parsed.get("category") or "Разное"
     if category not in TODOIST_SECTIONS:
@@ -97,6 +117,8 @@ def create_todoist_task(parsed: dict) -> None:
         "section_id": get_todoist_section_id(category),
         "content": content,
     }
+    if responsible_uid:
+        payload["responsible_uid"] = responsible_uid
     if parsed.get("due_date") and parsed.get("due_time"):
         payload["due_string"] = f"{parsed['due_date']} {parsed['due_time']}"
     elif parsed.get("due_date"):
@@ -172,6 +194,7 @@ async def process_recognized_text(
         return
 
     parsed = parse_task(text)
+    parsed["_telegram_user_id"] = update.effective_user.id
     if not parsed.get("assignee"):
         parsed["assignee"] = update.effective_user.first_name
 
