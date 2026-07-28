@@ -26,6 +26,7 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 TODOIST_API_TOKEN = os.getenv("TODOIST_API_TOKEN")
 TODOIST_PROJECT_NAME = "Семья"
+TODOIST_SECTIONS = ["Покупки", "Дела по дому", "Врачи", "Разное"]
 ALLOWED_USER_IDS = {
     int(uid.strip())
     for uid in os.getenv("ALLOWED_USER_IDS", "").split(",")
@@ -34,6 +35,7 @@ ALLOWED_USER_IDS = {
 
 groq_client = Groq(api_key=GROQ_API_KEY)
 _todoist_project_id = None
+_todoist_section_ids = {}
 
 
 def get_todoist_project_id() -> str:
@@ -54,13 +56,47 @@ def get_todoist_project_id() -> str:
     raise ValueError(f"Проект '{TODOIST_PROJECT_NAME}' не найден в Todoist")
 
 
+def get_todoist_section_id(category: str) -> str:
+    if category in _todoist_section_ids:
+        return _todoist_section_ids[category]
+
+    project_id = get_todoist_project_id()
+    response = requests.get(
+        "https://api.todoist.com/api/v1/sections",
+        headers={"Authorization": f"Bearer {TODOIST_API_TOKEN}"},
+        params={"project_id": project_id},
+    )
+    response.raise_for_status()
+    for section in response.json()["results"]:
+        _todoist_section_ids[section["name"]] = section["id"]
+
+    if category not in _todoist_section_ids:
+        response = requests.post(
+            "https://api.todoist.com/api/v1/sections",
+            headers={"Authorization": f"Bearer {TODOIST_API_TOKEN}"},
+            json={"project_id": project_id, "name": category},
+        )
+        response.raise_for_status()
+        _todoist_section_ids[category] = response.json()["id"]
+
+    return _todoist_section_ids[category]
+
+
 def create_todoist_task(parsed: dict) -> None:
     content = parsed.get("task") or "Задача"
     assignee = parsed.get("assignee")
     if assignee:
         content = f"{assignee}: {content}"
 
-    payload = {"project_id": get_todoist_project_id(), "content": content}
+    category = parsed.get("category") or "Разное"
+    if category not in TODOIST_SECTIONS:
+        category = "Разное"
+
+    payload = {
+        "project_id": get_todoist_project_id(),
+        "section_id": get_todoist_section_id(category),
+        "content": content,
+    }
     if parsed.get("due_date") and parsed.get("due_time"):
         payload["due_string"] = f"{parsed['due_date']} {parsed['due_time']}"
     elif parsed.get("due_date"):
@@ -85,6 +121,7 @@ def transcribe_voice(audio_bytes: bytes) -> str:
 
 def parse_task(text: str) -> dict:
     today = datetime.date.today().isoformat()
+    categories = ", ".join(TODOIST_SECTIONS)
     completion = groq_client.chat.completions.create(
         model="llama-3.3-70b-versatile",
         messages=[
@@ -102,7 +139,9 @@ def parse_task(text: str) -> dict:
                     "нет — null;\n"
                     '- "due_time": время выполнения в формате HH:MM (24-часовой '
                     "формат), если в тексте явно названо время; если времени "
-                    "нет — null."
+                    "нет — null;\n"
+                    f'- "category": одна из категорий [{categories}], выбери '
+                    "наиболее подходящую по смыслу задачи."
                 ),
             },
             {"role": "user", "content": text},
@@ -120,7 +159,8 @@ def format_task_summary(parsed: dict) -> str:
     return (
         f"Кто: {parsed.get('assignee') or '—'}\n"
         f"Что: {parsed.get('task') or '—'}\n"
-        f"Когда: {when}"
+        f"Когда: {when}\n"
+        f"Раздел: {parsed.get('category') or 'Разное'}"
     )
 
 
