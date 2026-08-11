@@ -2,9 +2,7 @@ import datetime
 import json
 import logging
 import os
-import threading
 import uuid
-from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import requests
 from dotenv import load_dotenv
@@ -292,29 +290,26 @@ async def handle_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.edit_message_text("Отменено. Отправь голосовое ещё раз, если нужно.")
 
 
-class HealthCheckHandler(BaseHTTPRequestHandler):
-    def do_GET(self) -> None:
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"OK")
-
-    def log_message(self, format, *args) -> None:
-        pass
-
-
-def start_health_server() -> None:
-    port = int(os.getenv("PORT", "8080"))
-    HTTPServer(("0.0.0.0", port), HealthCheckHandler).serve_forever()
-
-
 def main() -> None:
-    threading.Thread(target=start_health_server, daemon=True).start()
-
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(CallbackQueryHandler(handle_confirmation))
-    app.run_polling()
+
+    port = int(os.getenv("PORT", "8080"))
+    external_url = os.getenv("RENDER_EXTERNAL_URL", "").rstrip("/")
+    if not external_url:
+        raise RuntimeError(
+            "RENDER_EXTERNAL_URL не задан — эта переменная нужна для настройки webhook "
+            "и обычно устанавливается автоматически на Render"
+        )
+
+    app.run_webhook(
+        listen="0.0.0.0",
+        port=port,
+        url_path=TELEGRAM_BOT_TOKEN,
+        webhook_url=f"{external_url}/{TELEGRAM_BOT_TOKEN}",
+    )
 
 
 if __name__ == "__main__":
