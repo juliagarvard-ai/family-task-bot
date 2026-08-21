@@ -162,7 +162,7 @@ def parse_task(text: str) -> dict:
     today = datetime.date.today().isoformat()
     categories = ", ".join(TODOIST_SECTIONS)
     completion = groq_client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model="openai/gpt-oss-120b",
         messages=[
             {
                 "role": "system",
